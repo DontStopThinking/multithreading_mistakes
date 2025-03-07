@@ -14,7 +14,30 @@ static int g_CurrentWordIndex = 0;
 std::unordered_map<std::string, int> g_WordCountDict = {};
 static std::mutex g_WordCountCalculatorMutex = {};
 
-static std::vector<std::string> GetWordList()
+// trim from both ends (in place)
+static inline void Trim(std::string& s) {
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }));
+    s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }).base(), s.end());
+}
+
+// Trim s, make it uppercase, remove hyphens and single-quotes.
+static void RemoveSpecialSymbols(std::string& s)
+{
+    Trim(s);
+    // Make string uppercase
+    for (char& c : s)
+    {
+        c = std::toupper(c);
+    }
+    std::erase(s, '-');
+    std::erase(s, '\'');
+}
+
+static inline std::vector<std::string> GetWordList()
 {
     return
     {
@@ -35,7 +58,7 @@ static std::vector<std::string> GetWordList()
     };
 }
 
-static std::vector<std::string> GetCurseWords()
+static inline std::vector<std::string> GetCurseWords()
 {
     return
     {
@@ -45,52 +68,46 @@ static std::vector<std::string> GetCurseWords()
     };
 }
 
-static void ThreadDoWork()
+struct ThreadWorkBlock
+{
+public:
+    size_t m_StartingIndex;
+    size_t m_Count;
+
+    ThreadWorkBlock(const size_t startingIndex, const size_t count)
+        : m_StartingIndex(startingIndex)
+        , m_Count(count)
+    {
+    }
+};
+
+static void ThreadDoWork(const ThreadWorkBlock localWorkBlock)
 {
     std::println("Starting ThreadDoWork...");
 
-    bool atLeastOneWordRemaining = false;
-    int thisWordIndex;
-    {
-        std::scoped_lock lock(g_WordCountCalculatorMutex);
-        thisWordIndex = g_CurrentWordIndex;
-        g_CurrentWordIndex++;
-    }
+    std::unordered_map<std::string, int> localWordCountDict;
+    localWordCountDict.reserve(localWorkBlock.m_Count);
 
-    if (thisWordIndex < g_WordList.size())
+    for (size_t i = localWorkBlock.m_StartingIndex;
+         i < localWorkBlock.m_StartingIndex + localWorkBlock.m_Count;
+         ++i)
     {
-        atLeastOneWordRemaining = true;
-    }
-
-    while (atLeastOneWordRemaining)
-    {
-        const std::string thisWord = g_WordList[thisWordIndex];
+        std::string thisWord = g_WordList[i];
 
         if (std::find(g_CurseWords.begin(), g_CurseWords.end(), thisWord) != g_CurseWords.end())
         {
             std::println("Curse word detected!");
         }
 
+        RemoveSpecialSymbols(thisWord);
+        localWordCountDict[thisWord]++;
+    }
+
+    {
+        std::scoped_lock lock(g_WordCountCalculatorMutex);
+        for (const auto& [key, value] : localWordCountDict)
         {
-            std::scoped_lock lock(g_WordCountCalculatorMutex);
-
-            bool firstOccurrenceOfWord = !g_WordCountDict.contains(thisWord);
-            if (firstOccurrenceOfWord)
-            {
-                g_WordCountDict[thisWord] = 1;
-            }
-            else
-            {
-                g_WordCountDict[thisWord]++;
-            }
-
-            thisWordIndex = g_CurrentWordIndex;
-            g_CurrentWordIndex++;
-
-            if (thisWordIndex >= g_WordList.size())
-            {
-                atLeastOneWordRemaining = false;
-            }
+            g_WordCountDict[key] = value;
         }
     }
 }
@@ -100,10 +117,13 @@ static void CalculateWordCounts()
     g_WordList = GetWordList();
     g_CurseWords = GetCurseWords();
 
-    std::thread threadA(ThreadDoWork);
-    std::thread threadB(ThreadDoWork);
-    std::thread threadC(ThreadDoWork);
-    std::thread threadD(ThreadDoWork);
+    const size_t numWords = g_WordList.size();
+    const size_t quarterOfWords = numWords / 4;
+
+    std::thread threadA(ThreadDoWork, ThreadWorkBlock(quarterOfWords * 0, quarterOfWords));
+    std::thread threadB(ThreadDoWork, ThreadWorkBlock(quarterOfWords * 1, quarterOfWords));
+    std::thread threadC(ThreadDoWork, ThreadWorkBlock(quarterOfWords * 2, quarterOfWords));
+    std::thread threadD(ThreadDoWork, ThreadWorkBlock(quarterOfWords * 3, numWords - quarterOfWords * 3));
 
     threadA.join();
     std::println("g_WordCountDict: {}", g_WordCountDict);
@@ -113,7 +133,6 @@ static void CalculateWordCounts()
     std::println("g_WordCountDict: {}", g_WordCountDict);
     threadD.join();
     std::println("g_WordCountDict: {}", g_WordCountDict);
-
 }
 
 int main()
