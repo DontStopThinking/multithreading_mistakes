@@ -54,7 +54,25 @@ static inline std::vector<std::string> GetWordList()
         "word9",
         "word10",
         "word11",
-        "word12",
+        "word13",
+        "word14",
+        "word15",
+        "word16",
+        "word17",
+        "word18",
+        "word19",
+        "word20",
+        "word21",
+        "word22",
+        "word23",
+        "word24",
+        "word25",
+        "word26",
+        "word27",
+        "word28",
+        "word29",
+        "bitch",
+        "fuck",
     };
 }
 
@@ -81,6 +99,10 @@ public:
     }
 };
 
+// A "section" here is a smaller chunk of work within a larger work block that is assigned to a
+// thread.
+constexpr inline size_t NUM_SECTIONS_PER_THREAD = 3;
+
 static void ThreadDoWork(const ThreadWorkBlock localWorkBlock)
 {
     std::println("Starting ThreadDoWork...");
@@ -88,26 +110,40 @@ static void ThreadDoWork(const ThreadWorkBlock localWorkBlock)
     std::unordered_map<std::string, int> localWordCountDict;
     localWordCountDict.reserve(localWorkBlock.m_Count);
 
-    for (size_t i = localWorkBlock.m_StartingIndex;
-         i < localWorkBlock.m_StartingIndex + localWorkBlock.m_Count;
-         ++i)
+    const size_t countPerSection = localWorkBlock.m_Count / NUM_SECTIONS_PER_THREAD;
+    for (size_t section = 0;
+        section < NUM_SECTIONS_PER_THREAD;
+        section++)
     {
-        std::string thisWord = g_WordList[i];
+        const size_t startingIndex = localWorkBlock.m_StartingIndex + countPerSection * section;
+        const size_t count = section < NUM_SECTIONS_PER_THREAD - 1
+            ? countPerSection
+            : localWorkBlock.m_Count - countPerSection * (NUM_SECTIONS_PER_THREAD - 1);
+        const size_t endingIndex = startingIndex + count;
 
-        if (std::find(g_CurseWords.begin(), g_CurseWords.end(), thisWord) != g_CurseWords.end())
+        localWordCountDict.clear();
+
+        for (size_t i = startingIndex;
+            i < endingIndex;
+            i++)
         {
-            std::println("Curse word detected!");
+            std::string thisWord = g_WordList[i];
+
+            if (std::find(g_CurseWords.begin(), g_CurseWords.end(), thisWord) != g_CurseWords.end())
+            {
+                std::println("Curse word detected!");
+            }
+
+            RemoveSpecialSymbols(thisWord);
+            localWordCountDict[thisWord]++;
         }
 
-        RemoveSpecialSymbols(thisWord);
-        localWordCountDict[thisWord]++;
-    }
-
-    {
-        std::scoped_lock lock(g_WordCountCalculatorMutex);
-        for (const auto& [key, value] : localWordCountDict)
         {
-            g_WordCountDict[key] = value;
+            std::scoped_lock lock(g_WordCountCalculatorMutex);
+            for (const auto& [key, value] : localWordCountDict)
+            {
+                g_WordCountDict[key] = value;
+            }
         }
     }
 }
